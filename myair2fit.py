@@ -246,6 +246,25 @@ def post_sleep(access_token: str, sleep_date: date, usage_hours: float,
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def parse_duration(value: str) -> float:
+    """Parse a duration string as decimal hours (e.g. '7.5') or H:MM (e.g. '7:30')."""
+    if ":" in value:
+        parts = value.split(":", 1)
+        try:
+            hours = int(parts[0])
+            minutes = int(parts[1])
+        except ValueError:
+            raise ValueError(f"invalid duration: {value}")
+        if minutes < 0 or minutes >= 60:
+            raise ValueError(f"minutes must be 0-59: {value}")
+        return hours + minutes / 60.0
+    return float(value)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -283,7 +302,10 @@ def main():
     parser = argparse.ArgumentParser(
         description="Import myAir CPAP sleep data into Fitbit."
     )
-    parser.add_argument("source", help="Path to myAir export ZIP, extracted directory, or SLEEP_RECORD.csv")
+    parser.add_argument("source", nargs="?", default=None,
+                        help="Path to myAir export ZIP, extracted directory, or SLEEP_RECORD.csv")
+    parser.add_argument("--date", nargs=2, action="append", metavar=("YYYY-MM-DD", "DURATION"),
+                        help="Sleep date and duration (hours as decimal or H:MM); can be repeated")
     parser.add_argument("--start-date", type=date.fromisoformat,
                         help="Only import records on or after this date (yyyy-MM-dd)")
     parser.add_argument("--end-date", type=date.fromisoformat,
@@ -300,8 +322,26 @@ def main():
               file=sys.stderr)
         sys.exit(1)
 
-    csv_path = find_sleep_csv(args.source)
-    records = load_sleep_records(csv_path, args.start_date, args.end_date)
+    if args.date:
+        records = []
+        for date_str, hours_str in args.date:
+            try:
+                d = date.fromisoformat(date_str)
+            except ValueError:
+                parser.error(f"invalid date: {date_str}")
+            try:
+                h = parse_duration(hours_str)
+            except ValueError:
+                parser.error(f"invalid duration: {hours_str}")
+            if h <= 0:
+                parser.error(f"duration must be positive: {hours_str}")
+            records.append({"date": d, "usage_hours": h})
+        records.sort(key=lambda r: r["date"])
+    elif args.source:
+        csv_path = find_sleep_csv(args.source)
+        records = load_sleep_records(csv_path, args.start_date, args.end_date)
+    else:
+        parser.error("either source or --date is required")
 
     if not records:
         print("No sleep records found matching the criteria.")
