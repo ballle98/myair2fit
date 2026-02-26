@@ -1,0 +1,4 @@
+.env
+.fitbit_tokens.json
+__pycache__/
+*.pyc
