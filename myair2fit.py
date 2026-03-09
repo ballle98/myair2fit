@@ -304,15 +304,19 @@ def main():
     )
     parser.add_argument("source", nargs="?", default=None,
                         help="Path to myAir export ZIP, extracted directory, or SLEEP_RECORD.csv")
-    parser.add_argument("--date", nargs=2, action="append", metavar=("YYYY-MM-DD", "DURATION"),
-                        help="Sleep date and duration (hours as decimal or H:MM); can be repeated")
-    parser.add_argument("--start-date", type=date.fromisoformat,
+    parser.add_argument("-d", "--date", type=date.fromisoformat,
+                        help="Base sleep date (used with --csv-durations or --duration)")
+    parser.add_argument("-D", "--duration", type=float,
+                        help="Sleep duration in hours (used with --date)")
+    parser.add_argument("-c", "--csv-durations",
+                        help="CSV list of durations (hours as decimal or H:MM) starting from --date")
+    parser.add_argument("-s", "--start-date", type=date.fromisoformat,
                         help="Only import records on or after this date (yyyy-MM-dd)")
-    parser.add_argument("--end-date", type=date.fromisoformat,
+    parser.add_argument("-e", "--end-date", type=date.fromisoformat,
                         help="Only import records on or before this date (yyyy-MM-dd)")
-    parser.add_argument("--dry-run", action="store_true",
+    parser.add_argument("-n", "--dry-run", action="store_true",
                         help="Preview records without posting to Fitbit")
-    parser.add_argument("--start-time", default=DEFAULT_START_TIME,
+    parser.add_argument("-t", "--start-time", default=DEFAULT_START_TIME,
                         help=f"Sleep start time in HH:mm (default: {DEFAULT_START_TIME})")
     args = parser.parse_args()
 
@@ -322,22 +326,28 @@ def main():
               file=sys.stderr)
         sys.exit(1)
 
-    if args.date:
+    if args.date and args.csv_durations:
+        base_date = args.date
+        duration_strs = [s.strip() for s in args.csv_durations.split(",") if s.strip()]
+        if not duration_strs:
+            parser.error("--csv-durations cannot be empty")
         records = []
-        for date_str, hours_str in args.date:
+        for i, dur_str in enumerate(duration_strs):
             try:
-                d = date.fromisoformat(date_str)
+                h = parse_duration(dur_str)
             except ValueError:
-                parser.error(f"invalid date: {date_str}")
-            try:
-                h = parse_duration(hours_str)
-            except ValueError:
-                parser.error(f"invalid duration: {hours_str}")
+                parser.error(f"invalid duration in CSV: {dur_str}")
             if h <= 0:
-                parser.error(f"duration must be positive: {hours_str}")
-            records.append({"date": d, "usage_hours": h})
-        records.sort(key=lambda r: r["date"])
+                parser.error(f"duration must be positive: {dur_str}")
+            current_date = date.fromordinal(base_date.toordinal() + i)
+            records.append({"date": current_date, "usage_hours": h})
+    elif args.date and args.duration:
+        if args.duration <= 0:
+            parser.error("--duration must be positive")
+        records = [{"date": args.date, "usage_hours": args.duration}]
     elif args.source:
+        if args.duration or args.csv_durations:
+            parser.error("--duration/--csv-durations require --date without source")
         csv_path = find_sleep_csv(args.source)
         records = load_sleep_records(csv_path, args.start_date, args.end_date)
     else:
