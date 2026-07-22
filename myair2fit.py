@@ -20,7 +20,7 @@ import time
 import urllib.parse
 import webbrowser
 import zipfile
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 import requests
 from dotenv import load_dotenv
@@ -32,6 +32,7 @@ DEFAULT_START_TIME = "22:30"
 FITBIT_AUTH_URI = "https://www.fitbit.com/oauth2/authorize"
 FITBIT_TOKEN_URI = "https://api.fitbit.com/oauth2/token"
 FITBIT_SLEEP_URL = "https://api.fitbit.com/1.2/user/-/sleep.json"
+FITBIT_SLEEP_LIST_URL = "https://api.fitbit.com/1.2/user/-/sleep/list.json"
 REDIRECT_PORT = 8080
 REDIRECT_URI = f"http://localhost:{REDIRECT_PORT}/callback"
 TOKEN_FILE = ".fitbit_tokens.json"
@@ -228,6 +229,25 @@ def load_sleep_records(csv_path: str, start_date: date = None, end_date: date = 
 # Fitbit API
 # ---------------------------------------------------------------------------
 
+def get_last_sleep_date(access_token: str) -> date | None:
+    """Query Fitbit for the most recent sleep log date."""
+    resp = requests.get(
+        FITBIT_SLEEP_LIST_URL,
+        headers={"Authorization": f"Bearer {access_token}"},
+        params={"beforeDate": (date.today() + timedelta(days=1)).isoformat(),
+                "sort": "desc", "offset": 0, "limit": 1},
+    )
+    if resp.status_code != 200:
+        print(f"Failed to query Fitbit sleep logs ({resp.status_code}): {resp.text}",
+              file=sys.stderr)
+        return None
+    data = resp.json()
+    sleep_list = data.get("sleep", [])
+    if not sleep_list:
+        return None
+    return date.fromisoformat(sleep_list[0]["dateOfSleep"])
+
+
 def post_sleep(access_token: str, sleep_date: date, usage_hours: float,
                start_time: str = DEFAULT_START_TIME) -> dict:
     """POST a single sleep log to Fitbit. Returns response dict."""
@@ -316,6 +336,8 @@ def main():
                         help="Only import records on or before this date (yyyy-MM-dd)")
     parser.add_argument("-n", "--dry-run", action="store_true",
                         help="Preview records without posting to Fitbit")
+    parser.add_argument("-f", "--fill-to-today", action="store_true",
+                        help="Fill from --date through today using --duration for each day")
     parser.add_argument("-t", "--start-time", default=DEFAULT_START_TIME,
                         help=f"Sleep start time in HH:mm (default: {DEFAULT_START_TIME})")
     args = parser.parse_args()
@@ -341,6 +363,38 @@ def main():
                 parser.error(f"duration must be positive: {dur_str}")
             current_date = date.fromordinal(base_date.toordinal() + i)
             records.append({"date": current_date, "usage_hours": h})
+    elif args.fill_to_today and args.duration:
+        if args.duration <= 0:
+            parser.error("--duration must be positive")
+        base_date = args.date if args.date else None
+        if base_date is None:
+            if args.source:
+                # Find the last date with data from the source
+                csv_path = find_sleep_csv(args.source)
+                all_records = load_sleep_records(csv_path)
+                if not all_records:
+                    print("No existing sleep records found in source.")
+                    return
+                last_date = all_records[-1]["date"]
+            else:
+                # Query Fitbit for the last sleep log date
+                access_token = get_access_token(client_id)
+                last_date = get_last_sleep_date(access_token)
+                if last_date is None:
+                    print("No existing sleep logs found in Fitbit.")
+                    return
+            base_date = last_date + timedelta(days=1)
+            print(f"Last date with data: {last_date.isoformat()}")
+            print(f"Filling from {base_date.isoformat()} to {date.today().isoformat()}\n")
+        today = date.today()
+        if base_date > today:
+            print(f"Start date {base_date.isoformat()} is after today, nothing to fill.")
+            return
+        records = []
+        d = base_date
+        while d <= today:
+            records.append({"date": d, "usage_hours": args.duration})
+            d += timedelta(days=1)
     elif args.date and args.duration:
         if args.duration <= 0:
             parser.error("--duration must be positive")
@@ -351,7 +405,7 @@ def main():
         csv_path = find_sleep_csv(args.source)
         records = load_sleep_records(csv_path, args.start_date, args.end_date)
     else:
-        parser.error("either source or --date is required")
+        parser.error("provide source, --date, or --fill-to-today with --duration")
 
     if not records:
         print("No sleep records found matching the criteria.")

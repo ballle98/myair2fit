@@ -38,6 +38,15 @@ python myair2fit.py --start-date 2025-09-01 --end-date 2025-11-30 "C:\path\to\ex
 
 # Use a custom sleep start time (default: 22:30)
 python myair2fit.py --start-time 23:00 "C:\path\to\export.zip"
+
+# Fill from last date in export through today with a fixed duration
+python myair2fit.py --fill-to-today --duration 7.5 "C:\path\to\export.zip"
+
+# Fill from last date in Fitbit through today (no export needed)
+python myair2fit.py --fill-to-today --duration 7.5
+
+# Fill from a specific date through today with a fixed duration
+python myair2fit.py --fill-to-today --date 2025-12-01 --duration 7.5
 ```
 
 On first run, a browser window will open for Fitbit authorization. After granting access, tokens are cached in `.fitbit_tokens.json` and refreshed automatically.
